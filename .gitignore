@@ -1,0 +1,13 @@
+# Xcode
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+Packages/PropCore/.build/
+
+# 同梱用モデル（数百 MB あるため git 管理しない。scripts/download_model.sh で取得）
+App/Resources/Models/*
+!App/Resources/Models/README.md
+
+.DS_Store

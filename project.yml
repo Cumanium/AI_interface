@@ -1,0 +1,63 @@
+# XcodeGen の定義ファイル。Mac で `xcodegen generate` を実行すると AIInterface.xcodeproj が生成される。
+name: AIInterface
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: ja
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+packages:
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    minorVersion: 3.33.0
+  mlx-swift:
+    url: https://github.com/ml-explore/mlx-swift
+    minorVersion: 0.33.0
+  swift-huggingface:
+    url: https://github.com/huggingface/swift-huggingface
+    from: 0.9.0
+  swift-transformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: 1.3.0
+  PropCore:
+    path: Packages/PropCore
+targets:
+  AIInterface:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Sources
+      # 同梱モデル。フォルダごと「Models」としてバンドルにコピーする。
+      - path: App/Resources/Models
+        type: folder
+        buildPhase: resources
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: AI
+        CFBundleDevelopmentRegion: ja
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.AIInterface
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        # 自分の Apple Developer チーム ID を入れるか、Xcode の Signing & Capabilities で選ぶ。
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: mlx-swift-lm
+        products: [MLXLLM, MLXLMCommon, MLXHuggingFace]
+      - package: mlx-swift
+        product: MLX
+      - package: swift-huggingface
+        product: HuggingFace
+      - package: swift-transformers
+        product: Tokenizers
+      - package: PropCore
