@@ -1,0 +1,68 @@
+name: Pages
+
+# web/ を更新して push したとき、または Actions 画面から手動で実行したときに GitHub Pages へ公開する。
+on:
+  push:
+    branches: [claude/jolly-babbage-e02s44]
+    paths: ["web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # web/prop-chat.html は claude.ai のアーティファクト用に <head> を省いた形なので、
+      # 単体のページとして開けるように HTML の骨組みで包む。
+      - name: Build site
+        run: |
+          mkdir -p _site
+          cp -R web/assets _site/assets
+          {
+            cat <<'HEAD'
+          <!doctype html>
+          <html lang="ja">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+          <meta name="apple-mobile-web-app-capable" content="yes">
+          <meta name="mobile-web-app-capable" content="yes">
+          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+          <meta name="apple-mobile-web-app-title" content="AI">
+          <meta name="robots" content="noindex, nofollow">
+          <style>
+          :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+          body { margin: 0; }
+          [hidden] { display: none !important; }
+          </style>
+          HEAD
+            cat web/prop-chat.html
+            printf '\n</html>\n'
+          } > _site/index.html
+          touch _site/.nojekyll
+          ls -la _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
