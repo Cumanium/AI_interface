@@ -245,8 +245,24 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .confirm { display: grid; gap: 8px; padding: 10px; border-radius: 10px; border: 1px solid var(--danger); }
 .confirm p { margin: 0; font-size: 14px; }
 
+.seg3 { grid-template-columns: repeat(3, 1fr); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.loading-text {
+  display: inline-block;
+  color: var(--muted);
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--fg) 50%, var(--muted) 60%, var(--muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .caret::after, .typing i { animation: none; }
+  .caret::after, .typing i, .loading-text { animation: none; }
+  .loading-text { -webkit-text-fill-color: var(--muted); }
   .typing i { opacity: .7; }
 }
 </style>
@@ -281,7 +297,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
       <div class="card">
         <button class="btn primary" id="resetTake" type="button">会話を消して台本の頭に戻す</button>
         <div class="field">
-          <label for="nextLine">次に話す台詞</label>
+          <label for="nextLine">次のやりとり</label>
           <select id="nextLine"></select>
           <small>途中のカットから撮り直すときに選びます。</small>
         </div>
@@ -292,31 +308,71 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
       <h3>台本</h3>
       <div class="card">
         <div class="field">
-          <label for="script">AI の台詞</label>
+          <label for="script">やりとり</label>
           <textarea id="script" spellcheck="false"></textarea>
-          <small>台詞の区切りは「---」だけの行です。「#」で始まる行はメモとして無視されます。何を入力されても、台詞を上から順番に返します。</small>
+          <small>
+            やりとりの区切りは「---」だけの行です。<br>
+            「&gt;」で始まる行は演者の入力、それ以外は AI の返答です。<br>
+            「待ち: 3」の行で、そのやりとりだけ読み込み時間を 3 秒にできます。<br>
+            「#」で始まる行はメモとして無視されます。
+          </small>
           <span class="meta" id="scriptMeta"></span>
         </div>
         <div class="field">
           <span class="label">台本を使い切ったら</span>
           <div class="seg" role="group" aria-label="台本を使い切ったら">
-            <button type="button" id="policyFallback">予備の台詞を返す</button>
+            <button type="button" id="policyFallback">予備の返答を返す</button>
             <button type="button" id="policyLoop">最初に戻る</button>
           </div>
         </div>
         <div class="field">
-          <label for="fallback">予備の台詞</label>
+          <label for="fallback">予備の返答</label>
           <input type="text" id="fallback">
         </div>
       </div>
     </div>
 
     <div class="group">
-      <h3>文字送り</h3>
+      <h3>演者の入力</h3>
       <div class="card">
         <div class="field">
-          <div class="range-row"><label for="thinking">考える時間</label><output id="thinkingOut"></output></div>
-          <input type="range" id="thinking" min="0" max="3000" step="50">
+          <span class="label">入力のしかた</span>
+          <div class="seg seg3" role="group" aria-label="入力のしかた">
+            <button type="button" id="typeAuto">タップで自動入力</button>
+            <button type="button" id="typeKeys">キーを押すと 1 文字</button>
+            <button type="button" id="typeManual">手で入力</button>
+          </div>
+          <small id="typeHelp"></small>
+        </div>
+        <div class="field" id="userSpeedField">
+          <div class="range-row"><label for="userInterval">自動入力の速さ（1 文字の間隔）</label><output id="userIntervalOut"></output></div>
+          <input type="range" id="userInterval" min="30" max="400" step="10">
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="autoSend"> 打ち終わったら自動で送信する</label>
+          <small>オフのときは、演者が送信ボタンを押します。</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>AI の返答</h3>
+      <div class="card">
+        <div class="field">
+          <div class="range-row"><label for="thinking">読み込み時間</label><output id="thinkingOut"></output></div>
+          <input type="range" id="thinking" min="0" max="8000" step="100">
+          <small>送信してから返答が出始めるまでの時間です。</small>
+        </div>
+        <div class="field">
+          <span class="label">読み込み中の表示</span>
+          <div class="seg" role="group" aria-label="読み込み中の表示">
+            <button type="button" id="loadDots">点（・・・）</button>
+            <button type="button" id="loadText">文字</button>
+          </div>
+        </div>
+        <div class="field" id="loadingTextField">
+          <label for="loadingText">読み込み中の文字</label>
+          <input type="text" id="loadingText">
         </div>
         <div class="field">
           <div class="range-row"><label for="interval">1 文字の間隔</label><output id="intervalOut"></output></div>
@@ -375,7 +431,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
   // ---------- 設定 ----------
   const STORAGE_KEY = "propChat.v1";
-  const SAMPLE_SCRIPT = [
+  const SCHEMA = 2;
+  const OLD_SAMPLE_SCRIPT = [
     "# サンプル台本（書き換えてください）",
     "こんにちは。今日はどんなご用件でしょうか？",
     "---",
@@ -384,14 +441,34 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     "---",
     "どういたしまして。またいつでも話しかけてくださいね。",
   ].join("\n");
+  const SAMPLE_SCRIPT = [
+    "# サンプル台本（書き換えてください）",
+    "# 「>」の行が演者の入力、それ以外が AI の返答",
+    "> こんにちは",
+    "こんにちは。今日はどんなご用件でしょうか？",
+    "---",
+    "> 最近、なんだか眠れなくて",
+    "待ち: 3",
+    "なるほど、少し考えさせてください。",
+    "……はい。それなら、寝る前に深呼吸をしてみるのはいかがでしょう。",
+    "---",
+    "> ありがとう",
+    "どういたしまして。またいつでも話しかけてくださいね。",
+  ].join("\n");
 
   const DEFAULTS = {
+    schema: SCHEMA,
     name: "AI",
     placeholder: "メッセージを入力",
     script: SAMPLE_SCRIPT,
     policy: "fallback",
     fallback: "申し訳ありません。もう一度お願いできますか？",
-    thinking: 900,
+    typing: "auto",          // auto | keys | manual
+    userInterval: 120,
+    autoSend: false,
+    thinking: 2000,
+    loadingStyle: "dots",    // dots | text
+    loadingText: "考えています…",
     interval: 45,
     comma: 120,
     sentence: 300,
@@ -400,11 +477,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   };
 
   function load() {
+    let saved = null;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return Object.assign({}, DEFAULTS, JSON.parse(raw));
+      if (raw) saved = JSON.parse(raw);
     } catch (_) { /* 保存できない環境でも動かす */ }
-    return Object.assign({}, DEFAULTS);
+    const s = Object.assign({}, DEFAULTS, saved || {});
+    if (saved && (saved.schema || 1) < SCHEMA) {
+      // 旧版からの移行: 初期値のままの項目だけ新しい初期値にする
+      if (saved.script === OLD_SAMPLE_SCRIPT) s.script = SAMPLE_SCRIPT;
+      if (saved.thinking === 900) s.thinking = DEFAULTS.thinking;
+      s.schema = SCHEMA;
+    }
+    delete s.everTapped;
+    return s;
   }
   function save() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
@@ -413,50 +499,69 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   const state = load();
 
   // ---------- 台本 ----------
-  // 「---」だけの行で区切る。「#」で始まる行は無視。空の台詞は数えない。
+  // 「---」だけの行でやりとりを区切る。
+  // やりとりの中で「>」で始まる行は演者の入力、「待ち: 秒」は読み込み時間、「#」はメモ、それ以外は AI の返答。
+  const USER_MARK = /^[>＞]\s?/;
+  const WAIT_LINE = /^(?:待ち|wait)\s*[:：]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:秒|s)?$/i;
+
   function parseScript(text) {
-    const lines = [];
-    let current = [];
+    const blocks = [];
+    let user = [], ai = [], wait = null;
     const flush = () => {
-      const joined = current.join("\n").trim();
-      if (joined) lines.push(joined);
-      current = [];
+      const u = user.join("\n").trim();
+      const a = ai.join("\n").trim();
+      if (u || a) blocks.push({ user: u || null, ai: a, wait });
+      user = []; ai = []; wait = null;
     };
     for (const raw of text.split(/\r?\n/)) {
       const trimmed = raw.trim();
-      if (trimmed === "---") flush();
-      else if (trimmed.startsWith("#")) continue;
-      else current.push(raw);
+      if (trimmed === "---") { flush(); continue; }
+      if (trimmed.startsWith("#")) continue;
+      if (USER_MARK.test(trimmed)) { user.push(trimmed.replace(USER_MARK, "")); continue; }
+      const w = trimmed.match(WAIT_LINE);
+      if (w) { wait = Number(w[1]) * 1000; continue; }
+      ai.push(raw);
     }
     flush();
-    return lines;
+    return blocks;
   }
 
-  function nextLine() {
-    const lines = parseScript(state.script);
-    if (state.nextIndex >= lines.length) {
-      if (state.policy === "loop" && lines.length > 0) state.nextIndex = 0;
-      else return state.fallback;
+  const blocks = () => parseScript(state.script);
+
+  /** 次のやりとり（進めない）。台本を使い切っていれば null。 */
+  function peekBlock() {
+    const list = blocks();
+    if (state.nextIndex < list.length) return list[state.nextIndex];
+    if (state.policy === "loop" && list.length > 0) return list[0];
+    return null;
+  }
+
+  /** AI の返答を取り出して、次のやりとりへ進める。 */
+  function takeReply() {
+    const list = blocks();
+    if (state.nextIndex >= list.length) {
+      if (state.policy === "loop" && list.length > 0) state.nextIndex = 0;
+      else return { ai: state.fallback, wait: null };
     }
-    const line = lines[state.nextIndex];
+    const block = list[state.nextIndex];
     state.nextIndex += 1;
     save();
-    return line;
+    return block;
   }
 
   // ---------- 文字送りのリズム（乱数なし。毎テイク同じタイミング） ----------
   const COMMA = new Set(["、", "，", ","]);
   const SENTENCE = new Set(["。", "．", "！", "？", "!", "?", "\n", "…"]);
   function schedule(text) {
-    const chars = Array.from(text);
     const steps = [];
     let pending = 0;
-    chars.forEach((ch, i) => {
-      steps.push({ delay: (i === 0 ? state.thinking : state.interval) + pending, ch });
+    Array.from(text).forEach((ch, i) => {
+      steps.push({ delay: (i === 0 ? 0 : state.interval) + pending, ch });
       pending = COMMA.has(ch) ? state.comma : SENTENCE.has(ch) ? state.sentence : 0;
     });
     return steps;
   }
+  const loadingTime = (block) => (block && block.wait != null ? block.wait : state.thinking);
 
   // ---------- 画面 ----------
   const $ = (id) => document.getElementById(id);
@@ -478,6 +583,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     return bubble;
   }
 
+  function loadingMarkup() {
+    if (state.loadingStyle === "text") {
+      const span = document.createElement("span");
+      span.className = "loading-text";
+      span.textContent = state.loadingText || "考えています…";
+      return span;
+    }
+    const span = document.createElement("span");
+    span.className = "typing";
+    span.setAttribute("aria-label", "返答を作成中");
+    span.innerHTML = "<i></i><i></i><i></i>";
+    return span;
+  }
+
   const SEND_ICON = '<path d="M12 19V5M5 12l7-7 7 7"/>';
   const STOP_ICON = '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>';
   function setResponding(value) {
@@ -488,20 +607,23 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     updateSendEnabled();
   }
   function updateSendEnabled() {
-    sendBtn.disabled = !responding && input.value.trim() === "";
+    sendBtn.disabled = !responding && (userTyping.active || input.value.trim() === "");
   }
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function reply() {
     const token = ++runToken;
-    const bubble = addBubble("ai", "");
-    bubble.innerHTML = '<span class="typing" aria-label="返答を作成中"><i></i><i></i><i></i></span>';
+    const block = takeReply();
     setResponding(true);
-    const steps = schedule(nextLine());
+    if (!block.ai) { setResponding(false); prepareUserLine(); return; }
+    const bubble = addBubble("ai", "");
+    bubble.appendChild(loadingMarkup());
+    scrollToEnd();
+    await wait(loadingTime(block));
     let text = "";
-    for (const step of steps) {
-      await wait(step.delay);
+    for (const step of schedule(block.ai)) {
+      if (step.delay) await wait(step.delay);
       if (token !== runToken) break;
       text += step.ch;
       bubble.textContent = text;
@@ -510,30 +632,121 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     }
     if (text === "") bubble.closest(".row").remove();
     bubble.classList.remove("caret");
-    if (token === runToken) setResponding(false);
+    if (token === runToken) { setResponding(false); prepareUserLine(); }
   }
 
   function stop() {
     runToken++;
     log.querySelectorAll(".caret").forEach((el) => el.classList.remove("caret"));
-    log.querySelectorAll(".typing").forEach((el) => el.closest(".row").remove());
+    log.querySelectorAll(".typing, .loading-text").forEach((el) => el.closest(".row").remove());
     setResponding(false);
+    if (input.value === "") prepareUserLine();
   }
 
   function send() {
     if (responding) { stop(); return; }
+    if (userTyping.active) return;
     const text = input.value.trim();
     if (!text) return;
     addBubble("user", text);
     input.value = "";
+    userTyping.reset();
     autosize();
     updateSendEnabled();
     requestWakeLock();
     reply();
   }
 
+  // ---------- 演者の入力 ----------
+  // 次のやりとりに「>」の行があれば、その文字列を入力欄に打つ。
+  const userTyping = {
+    target: null,     // 打つ文字の配列（台本の演者の台詞）
+    typed: 0,         // 打ち終えた文字数
+    active: false,    // 自動入力中
+    token: 0,
+    reset() { this.target = null; this.typed = 0; this.active = false; this.token++; },
+    get done() { return this.target !== null && this.typed >= this.target.length; },
+  };
+
+  function scriptedUserLine() {
+    if (state.typing === "manual" || responding) return null;
+    const block = peekBlock();
+    return block && block.user ? block.user : null;
+  }
+
+  /** 返答が終わったら、次の演者の台詞を準備する（まだ打たない）。 */
+  function prepareUserLine() {
+    userTyping.reset();
+    const line = scriptedUserLine();
+    if (line && input.value === "") userTyping.target = Array.from(line);
+  }
+
+  function showTyped() {
+    input.value = userTyping.target.slice(0, userTyping.typed).join("");
+    autosize();
+    updateSendEnabled();
+  }
+
+  function finishTyping() {
+    userTyping.active = false;
+    updateSendEnabled();
+    if (state.autoSend) setTimeout(() => { if (userTyping.done && !responding) send(); }, 600);
+  }
+
+  async function autoType() {
+    if (userTyping.active || !userTyping.target || userTyping.done) return;
+    userTyping.active = true;
+    const token = userTyping.token;
+    updateSendEnabled();
+    while (userTyping.typed < userTyping.target.length) {
+      const prev = userTyping.target[userTyping.typed - 1];
+      const extra = prev && (COMMA.has(prev) || SENTENCE.has(prev) || prev === " ") ? state.userInterval * 2 : 0;
+      await wait(state.userInterval + extra);
+      if (token !== userTyping.token) return;
+      userTyping.typed += 1;
+      showTyped();
+    }
+    finishTyping();
+  }
+
+  function typeOneKey() {
+    if (!userTyping.target || userTyping.done) return;
+    userTyping.typed += 1;
+    showTyped();
+    if (userTyping.done) finishTyping();
+  }
+
+  // 入力欄をタップしたとき（フォーカスが残ったままでも、タップで次の台詞を打ち始める）
+  function onInputTap() {
+    if (responding) return;
+    if (!userTyping.target && input.value === "") prepareUserLine();
+    if (state.typing === "auto" && userTyping.target && userTyping.typed === 0) autoType();
+  }
+  input.addEventListener("focus", onInputTap);
+  input.addEventListener("click", onInputTap);
+
+  // 「キーを押すと 1 文字」: 押されたキーに関係なく台本の次の文字を出す
+  input.addEventListener("beforeinput", (e) => {
+    if (!userTyping.target) return;
+    if (state.typing === "auto") { e.preventDefault(); return; }   // 自動入力中は手入力を受け付けない
+    if (state.typing !== "keys") return;
+    if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") return; // Enter は送信に使う
+    if (e.inputType.startsWith("insertCompositionText")) return; // 日本語の変換中は input 側で処理
+    e.preventDefault();
+    if (e.inputType.startsWith("insert")) typeOneKey();
+  });
+  input.addEventListener("input", () => {
+    if (userTyping.target && state.typing === "keys") {
+      // 取り消せない入力（日本語の変換など）も、台本の文字に置き換える
+      typeOneKey();
+      showTyped();
+      return;
+    }
+    autosize();
+    updateSendEnabled();
+  });
+
   $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
-  input.addEventListener("input", () => { autosize(); updateSendEnabled(); });
   input.addEventListener("keydown", (e) => {
     // 日本語の変換確定の Enter では送信しない
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
@@ -548,6 +761,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
   // 撮影中に画面が消えないようにする（許可されない環境では何もしない）
   let wakeLock = null;
+  let everTapped = false;
   async function requestWakeLock() {
     try {
       if (!wakeLock && navigator.wakeLock) {
@@ -557,7 +771,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     } catch (_) {}
   }
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.everTapped) requestWakeLock();
+    if (document.visibilityState === "visible" && everTapped) requestWakeLock();
   });
 
   // ---------- 隠し設定（名前を 3 回タップ） ----------
@@ -576,67 +790,104 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     sheet.hidden = false;
     sheet.scrollTop = 0;
   }
-  function closeSheet() { sheet.hidden = true; }
+  function closeSheet() {
+    sheet.hidden = true;
+    // 台本や入力方法の変更を、まだ打ち始めていない演者の台詞に反映する
+    if (!userTyping.active && userTyping.typed === 0) { input.value = ""; prepareUserLine(); autosize(); updateSendEnabled(); }
+  }
   $("closeSheet").addEventListener("click", closeSheet);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
 
   // ---------- 設定画面 ----------
-  const ranges = ["thinking", "interval", "comma", "sentence"];
+  const ranges = ["thinking", "interval", "comma", "sentence", "userInterval"];
+  const fmt = (k, v) => (k === "thinking" ? (v / 1000).toFixed(1) + " 秒" : v + " ms");
 
   function renderSettings() {
     $("name").value = state.name;
     $("placeholder").value = state.placeholder;
     $("script").value = state.script;
     $("fallback").value = state.fallback;
+    $("loadingText").value = state.loadingText;
+    $("autoSend").checked = state.autoSend;
     ranges.forEach((k) => { $(k).value = state[k]; });
-    renderPolicy();
+    renderToggles();
     renderDerived();
     $("confirmRestore").hidden = true;
   }
 
-  function renderPolicy() {
-    $("policyFallback").setAttribute("aria-pressed", String(state.policy === "fallback"));
-    $("policyLoop").setAttribute("aria-pressed", String(state.policy === "loop"));
+  const TYPE_HELP = {
+    auto: "演者が入力欄をタップすると、台本の「>」の行が自動で打たれます。キーボードを打つふりをしてください。",
+    keys: "どのキーを押しても、台本の次の 1 文字が入ります。英字キーボードにすると安定します（日本語入力の変換中は乱れることがあります）。",
+    manual: "演者が自分で入力します。何を入力しても、AI は台本の返答を返します。",
+  };
+
+  function renderToggles() {
+    const press = (id, on) => $(id).setAttribute("aria-pressed", String(on));
+    press("policyFallback", state.policy === "fallback");
+    press("policyLoop", state.policy === "loop");
+    press("typeAuto", state.typing === "auto");
+    press("typeKeys", state.typing === "keys");
+    press("typeManual", state.typing === "manual");
+    press("loadDots", state.loadingStyle === "dots");
+    press("loadText", state.loadingStyle === "text");
+    $("typeHelp").textContent = TYPE_HELP[state.typing];
+    $("userSpeedField").hidden = state.typing !== "auto";
+    $("loadingTextField").hidden = state.loadingStyle !== "text";
   }
 
   function renderDerived() {
-    const lines = parseScript(state.script);
-    if (state.nextIndex > lines.length) state.nextIndex = lines.length;
-    $("scriptMeta").textContent = lines.length + " 台詞";
+    const list = blocks();
+    if (state.nextIndex > list.length) state.nextIndex = list.length;
+    const withUser = list.filter((b) => b.user).length;
+    $("scriptMeta").textContent = list.length + " やりとり（うち演者の入力あり " + withUser + "）";
     const select = $("nextLine");
     select.innerHTML = "";
-    lines.forEach((line, i) => {
+    const clip = (s, n) => { const t = s.replace(/\s+/g, " "); return t.length > n ? t.slice(0, n) + "…" : t; };
+    list.forEach((b, i) => {
       const opt = document.createElement("option");
-      const head = line.replace(/\s+/g, " ");
       opt.value = String(i);
-      opt.textContent = (i + 1) + ". " + (head.length > 24 ? head.slice(0, 24) + "…" : head);
+      opt.textContent = (i + 1) + ". " + (b.user ? "「" + clip(b.user, 10) + "」→ " : "") + clip(b.ai || "（返答なし）", 16);
       select.appendChild(opt);
     });
     const end = document.createElement("option");
-    end.value = String(lines.length);
+    end.value = String(list.length);
     end.textContent = "（台本の終わり）";
     select.appendChild(end);
     select.value = String(state.nextIndex);
 
-    ranges.forEach((k) => { $(k + "Out").textContent = state[k] + " ms"; });
-    const total = lines.reduce((sum, line) => sum + schedule(line).reduce((s, st) => s + st.delay, 0), 0);
-    $("durationMeta").textContent = lines.length
-      ? "台本全体の表示時間の目安: " + (total / 1000).toFixed(1) + " 秒（入力の時間を除く）"
+    ranges.forEach((k) => { $(k + "Out").textContent = fmt(k, state[k]); });
+    const total = list.reduce((sum, b) => sum + (b.ai ? loadingTime(b) : 0) + schedule(b.ai).reduce((s, st) => s + st.delay, 0), 0);
+    $("durationMeta").textContent = list.length
+      ? "AI の返答の合計時間の目安: " + (total / 1000).toFixed(1) + " 秒（演者の入力の時間を除く）"
       : "";
 
     $("aiName").textContent = state.name || "AI";
     input.placeholder = state.placeholder || "";
   }
 
-  $("name").addEventListener("input", (e) => { state.name = e.target.value; save(); renderDerived(); });
-  $("placeholder").addEventListener("input", (e) => { state.placeholder = e.target.value; save(); renderDerived(); });
-  $("script").addEventListener("input", (e) => { state.script = e.target.value; save(); renderDerived(); });
-  $("fallback").addEventListener("input", (e) => { state.fallback = e.target.value; save(); });
+  const bindText = (id, key, rerender) => $(id).addEventListener("input", (e) => {
+    state[key] = e.target.value; save(); if (rerender) renderDerived();
+  });
+  bindText("name", "name", true);
+  bindText("placeholder", "placeholder", true);
+  bindText("script", "script", true);
+  bindText("fallback", "fallback", false);
+  bindText("loadingText", "loadingText", false);
   ranges.forEach((k) => {
     $(k).addEventListener("input", (e) => { state[k] = Number(e.target.value); save(); renderDerived(); });
   });
-  $("policyFallback").addEventListener("click", () => { state.policy = "fallback"; save(); renderPolicy(); });
-  $("policyLoop").addEventListener("click", () => { state.policy = "loop"; save(); renderPolicy(); });
+  $("autoSend").addEventListener("change", (e) => { state.autoSend = e.target.checked; save(); });
+
+  const bindChoice = (id, key, value) => $(id).addEventListener("click", () => {
+    state[key] = value; save(); renderToggles();
+  });
+  bindChoice("policyFallback", "policy", "fallback");
+  bindChoice("policyLoop", "policy", "loop");
+  bindChoice("typeAuto", "typing", "auto");
+  bindChoice("typeKeys", "typing", "keys");
+  bindChoice("typeManual", "typing", "manual");
+  bindChoice("loadDots", "loadingStyle", "dots");
+  bindChoice("loadText", "loadingStyle", "text");
   $("nextLine").addEventListener("change", (e) => { state.nextIndex = Number(e.target.value); save(); });
 
   $("resetTake").addEventListener("click", () => {
@@ -644,6 +895,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     log.innerHTML = "";
     state.nextIndex = 0;
     save();
+    input.value = "";
+    userTyping.reset();
     closeSheet();
   });
 
@@ -669,8 +922,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   });
 
   // ---------- 起動 ----------
-  document.addEventListener("pointerdown", () => { state.everTapped = true; requestWakeLock(); }, { once: true });
+  document.addEventListener("pointerdown", () => { everTapped = true; requestWakeLock(); }, { once: true });
   renderDerived();
+  prepareUserLine();
   updateSendEnabled();
 
   if (!state.hintShown) {
