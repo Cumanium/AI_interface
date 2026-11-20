@@ -6,6 +6,7 @@
 
 - モデル選定の経緯: [docs/01_model_selection.md](docs/01_model_selection.md)
 - **Xcode なしで使うウェブ版（台本モードのみ）:** [web/prop-chat.html](web/prop-chat.html)。ブラウザだけで動き、claude.ai のアーティファクトとして公開して iPhone で開ける。
+  - 公開先（GitHub Pages）: https://cumanium.github.io/AI_interface/ 。`web/` を更新して push すると自動で再公開される（`.github/workflows/pages.yml`）。
 
 ## 機能
 
