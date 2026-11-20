@@ -1,8 +1,7 @@
 name: CI
 
+# macOS ランナーは無料枠の消費が大きいため、Actions 画面からの手動実行のみ。
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 concurrency:
