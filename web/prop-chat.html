@@ -14,6 +14,9 @@
   --ok: #2fa86b;
   --busy: #e39b2d;
   --danger: #c8443b;
+  --particle: #2f6df6;
+  --particle-2: #0f9cc0;
+  --bar: rgba(255, 255, 255, 0.78);
   --font-ui: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -21,12 +24,14 @@
   :root:not([data-theme="light"]) {
     --bg: #0f1115; --surface: #171a20; --fg: #eef0f4; --muted: #9399a6; --line: #2a2e37;
     --accent: #4f86ff; --accent-fg: #ffffff; --ai-bubble: #22262e; --ok: #3cc07e; --busy: #f0ad45; --danger: #ef6a60;
+    --particle: #5d8dff; --particle-2: #45d3ef; --bar: rgba(23, 26, 32, 0.72);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1115; --surface: #171a20; --fg: #eef0f4; --muted: #9399a6; --line: #2a2e37;
   --accent: #4f86ff; --accent-fg: #ffffff; --ai-bubble: #22262e; --ok: #3cc07e; --busy: #f0ad45; --danger: #ef6a60;
+    --particle: #5d8dff; --particle-2: #45d3ef; --bar: rgba(23, 26, 32, 0.72);
   color-scheme: dark;
 }
 
@@ -45,12 +50,23 @@ button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .app {
+  position: relative;
+  z-index: 1;
   height: 100%;
   display: flex;
   flex-direction: column;
   max-width: 720px;
   margin: 0 auto;
-  background: var(--bg);
+}
+
+/* 背景の粒子エフェクト */
+#fx {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* Header */
@@ -65,6 +81,9 @@ button { cursor: pointer; }
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+  background: var(--bar);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -118,6 +137,9 @@ button { cursor: pointer; }
   padding-right: max(12px, env(safe-area-inset-right, 0px));
   border-top: 1px solid var(--line);
   background: var(--surface);
+  background: var(--bar);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 .composer textarea {
   flex: 1;
@@ -267,6 +289,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 </style>
 
+<canvas id="fx" aria-hidden="true"></canvas>
+
 <div class="app">
   <header class="header" id="header" aria-label="AI の名前（3 回タップで設定）">
     <span class="dot" id="dot"></span>
@@ -394,6 +418,22 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
       <h3>見た目</h3>
       <div class="card">
         <div class="field">
+          <label class="check"><input type="checkbox" id="fxOn"> 背景に粒子のエフェクトを表示する</label>
+          <small>粒子が球状に集まり、読み込み中は渦を巻いて縮み、返答中は文字に合わせて脈打ちます。</small>
+        </div>
+        <div class="field" id="fxCountField">
+          <div class="range-row"><label for="fxCount">粒子の数</label><output id="fxCountOut"></output></div>
+          <input type="range" id="fxCount" min="150" max="1500" step="50">
+        </div>
+        <div class="field" id="fxBrightField">
+          <div class="range-row"><label for="fxBright">明るさ</label><output id="fxBrightOut"></output></div>
+          <input type="range" id="fxBright" min="10" max="100" step="5">
+        </div>
+        <div class="field" id="fxSizeField">
+          <div class="range-row"><label for="fxSize">球の大きさ</label><output id="fxSizeOut"></output></div>
+          <input type="range" id="fxSize" min="20" max="60" step="1">
+        </div>
+        <div class="field">
           <label for="name">AI の表示名</label>
           <input type="text" id="name">
         </div>
@@ -473,6 +513,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     comma: 120,
     sentence: 300,
     nextIndex: 0,
+    fxOn: true,
+    fxCount: 650,
+    fxBright: 70,
+    fxSize: 34,
     hintShown: false,
   };
 
@@ -601,6 +645,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   const STOP_ICON = '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>';
   function setResponding(value) {
     responding = value;
+    if (!value) fx.setMode("idle");
     dot.classList.toggle("busy", value);
     $("sendIcon").innerHTML = value ? STOP_ICON : SEND_ICON;
     sendBtn.setAttribute("aria-label", value ? "停止" : "送信");
@@ -620,13 +665,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     const bubble = addBubble("ai", "");
     bubble.appendChild(loadingMarkup());
     scrollToEnd();
+    fx.setMode("loading");
     await wait(loadingTime(block));
+    if (token === runToken) fx.setMode("speaking");
     let text = "";
     for (const step of schedule(block.ai)) {
       if (step.delay) await wait(step.delay);
       if (token !== runToken) break;
       text += step.ch;
       bubble.textContent = text;
+      fx.pulse(step.ch);
       bubble.classList.add("caret");
       scrollToEnd();
     }
@@ -799,8 +847,12 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
 
   // ---------- 設定画面 ----------
-  const ranges = ["thinking", "interval", "comma", "sentence", "userInterval"];
-  const fmt = (k, v) => (k === "thinking" ? (v / 1000).toFixed(1) + " 秒" : v + " ms");
+  const ranges = ["thinking", "interval", "comma", "sentence", "userInterval", "fxCount", "fxBright", "fxSize"];
+  const fmt = (k, v) =>
+    k === "thinking" ? (v / 1000).toFixed(1) + " 秒"
+    : k === "fxCount" ? v + " 個"
+    : k === "fxBright" || k === "fxSize" ? v + " %"
+    : v + " ms";
 
   function renderSettings() {
     $("name").value = state.name;
@@ -809,6 +861,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     $("fallback").value = state.fallback;
     $("loadingText").value = state.loadingText;
     $("autoSend").checked = state.autoSend;
+    $("fxOn").checked = state.fxOn;
     ranges.forEach((k) => { $(k).value = state[k]; });
     renderToggles();
     renderDerived();
@@ -833,6 +886,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     $("typeHelp").textContent = TYPE_HELP[state.typing];
     $("userSpeedField").hidden = state.typing !== "auto";
     $("loadingTextField").hidden = state.loadingStyle !== "text";
+    ["fxCountField", "fxBrightField", "fxSizeField"].forEach((id) => { $(id).hidden = !state.fxOn; });
   }
 
   function renderDerived() {
@@ -877,6 +931,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     $(k).addEventListener("input", (e) => { state[k] = Number(e.target.value); save(); renderDerived(); });
   });
   $("autoSend").addEventListener("change", (e) => { state.autoSend = e.target.checked; save(); });
+  $("fxOn").addEventListener("change", (e) => { state.fxOn = e.target.checked; save(); renderToggles(); fx.configure(); });
+  ["fxCount", "fxBright", "fxSize"].forEach((k) => $(k).addEventListener("input", () => fx.configure()));
 
   const bindChoice = (id, key, value) => $(id).addEventListener("click", () => {
     state[key] = value; save(); renderToggles();
@@ -921,9 +977,192 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
     renderSettings();
   });
 
+
+  // ---------- 背景の粒子エフェクト ----------
+  // 単位球上にフィボナッチ格子で粒子を並べ、ばねで目標位置へ引き寄せる。
+  // idle: ゆっくり回転して呼吸 / loading: 渦を巻いて縮み、ざわつく / speaking: 文字ごとに脈打つ
+  const fx = (() => {
+    const canvas = $("fx");
+    const ctx = canvas.getContext("2d");
+    const reduceMotion = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : { matches: false };
+    const darkQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : { matches: false };
+    let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 100;
+    let parts = [];
+    let mode = "idle";
+    let energy = 0;          // 0〜1。状態に向かってなめらかに変わる
+    let kick = 0;            // 返答の文字ごとの脈動
+    let spin = 0;            // 回転角
+    let last = 0;
+    let raf = 0;
+    let colorA = "#2f6df6", colorB = "#0f9cc0", additive = false;
+
+    const MODE_ENERGY = { idle: 0, loading: 1, speaking: 0.45 };
+
+    function readColors() {
+      const cs = getComputedStyle(document.documentElement);
+      colorA = cs.getPropertyValue("--particle").trim() || colorA;
+      colorB = cs.getPropertyValue("--particle-2").trim() || colorB;
+      const theme = document.documentElement.getAttribute("data-theme");
+      additive = theme ? theme === "dark" : darkQuery.matches;
+    }
+
+    function build(count, scatter) {
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      const old = parts;
+      parts = [];
+      for (let i = 0; i < count; i++) {
+        const y = 1 - (i / (count - 1)) * 2;
+        const r = Math.sqrt(1 - y * y);
+        const th = golden * i;
+        const prev = old[i];
+        parts.push({
+          bx: Math.cos(th) * r, by: y, bz: Math.sin(th) * r,
+          x: prev ? prev.x : scatter ? (Math.random() - 0.5) * 6 : Math.cos(th) * r,
+          y: prev ? prev.y : scatter ? (Math.random() - 0.5) * 6 : y,
+          z: prev ? prev.z : scatter ? (Math.random() - 0.5) * 6 : Math.sin(th) * r,
+          vx: 0, vy: 0, vz: 0,
+          phase: Math.random() * Math.PI * 2,
+          size: 0.9 + Math.random() * 1.5,
+          tint: Math.random(),
+        });
+      }
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      // 球の中心はメッセージ欄の中央
+      const rect = log.getBoundingClientRect();
+      cx = rect.left + rect.width / 2;
+      cy = rect.top + rect.height * 0.45;
+      R = Math.min(W, rect.height || H) * (state.fxSize / 100);
+      if (reduceMotion.matches) frame(performance.now());
+    }
+
+    function step(dt, t) {
+      energy += (MODE_ENERGY[mode] - energy) * Math.min(1, dt * 2.5);
+      kick *= Math.exp(-dt * 7);
+      spin += dt * (0.18 + energy * 1.1);
+      const breathe = 1 + Math.sin(t * 0.0011) * 0.025;
+      const shrink = 1 - energy * 0.14 + kick * 0.12;
+      const jitter = 0.015 + energy * 0.05;
+      const k = 0.06, damp = 0.86;
+      for (const p of parts) {
+        const wob = 1 + Math.sin(t * 0.002 + p.phase) * jitter;
+        const rad = breathe * shrink * wob;
+        // 読み込み中は緯度ごとにずれて渦を巻く
+        const swirl = energy * 0.6 * p.by;
+        const cs = Math.cos(swirl), sn = Math.sin(swirl);
+        const tx = (p.bx * cs - p.bz * sn) * rad;
+        const tz = (p.bx * sn + p.bz * cs) * rad;
+        const ty = p.by * rad;
+        p.vx = (p.vx + (tx - p.x) * k) * damp;
+        p.vy = (p.vy + (ty - p.y) * k) * damp;
+        p.vz = (p.vz + (tz - p.z) * k) * damp;
+        p.x += p.vx; p.y += p.vy; p.z += p.vz;
+      }
+    }
+
+    function draw(t) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      if (!state.fxOn) return;
+      const bright = state.fxBright / 100;
+
+      // 中心のほのかな光
+      const glowR = R * (1.5 + energy * 0.4 + kick * 0.3);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+      g.addColorStop(0, hexA(colorB, (0.10 + energy * 0.12 + kick * 0.1) * bright));
+      g.addColorStop(1, hexA(colorB, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+
+      ctx.globalCompositeOperation = additive ? "lighter" : "source-over";
+      const tilt = 0.38, ct = Math.cos(tilt), st = Math.sin(tilt);
+      const cs = Math.cos(spin), sn = Math.sin(spin);
+      const f = 3.2;
+      for (const p of parts) {
+        // Y 軸で回転 → X 軸で傾ける
+        const x1 = p.x * cs - p.z * sn;
+        const z1 = p.x * sn + p.z * cs;
+        const y2 = p.y * ct - z1 * st;
+        const z2 = p.y * st + z1 * ct;
+        const denom = f - z2;
+        if (denom < 0.6) continue;   // カメラより手前に来た粒子は描かない（集まる途中の一瞬だけ）
+        const s = f / denom;
+        const sx = cx + x1 * R * s;
+        const sy = cy + y2 * R * s;
+        const depth = (z2 + 1) / 2; // 0: 奥, 1: 手前
+        const alpha = (0.22 + Math.max(0, Math.min(1, depth)) * 0.78) * bright * (0.85 + energy * 0.3);
+        const size = Math.min(6, p.size * s * (1 + energy * 0.35 + kick * 0.25));
+        ctx.fillStyle = hexA(p.tint > 0.5 + depth * 0.3 ? colorA : colorB, Math.min(1, alpha));
+        ctx.beginPath();
+        ctx.arc(sx, sy, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    function frame(t) {
+      const dt = last ? Math.min(0.05, (t - last) / 1000) : 0.016;
+      last = t;
+      if (reduceMotion.matches) {
+        // 動きを減らす設定では、静止した球を 1 回だけ描く
+        for (const p of parts) { p.x = p.bx; p.y = p.by; p.z = p.bz; }
+        draw(t);
+        return;
+      }
+      step(dt, t);
+      draw(t);
+      raf = state.fxOn ? requestAnimationFrame(frame) : 0;
+    }
+
+    const colorCache = new Map();
+    function hexA(color, a) {
+      let rgb = colorCache.get(color);
+      if (!rgb) {
+        const m = color.replace("#", "");
+        const full = m.length === 3 ? m.split("").map((c) => c + c).join("") : m;
+        rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) || 0).join(",");
+        colorCache.set(color, rgb);
+      }
+      return "rgba(" + rgb + "," + a.toFixed(3) + ")";
+    }
+
+    function start() {
+      cancelAnimationFrame(raf);
+      last = 0;
+      raf = requestAnimationFrame(frame);
+    }
+
+    function configure() {
+      readColors();
+      if (parts.length !== state.fxCount) build(state.fxCount, false);
+      resize();
+      if (state.fxOn) start(); else { cancelAnimationFrame(raf); raf = 0; draw(0); }
+    }
+
+    window.addEventListener("resize", resize);
+    if (darkQuery.addEventListener) darkQuery.addEventListener("change", () => { readColors(); if (reduceMotion.matches) frame(performance.now()); });
+    new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    readColors();
+    build(state.fxCount, true);   // 起動時は散らばった粒子が球に集まる
+
+    return {
+      configure,
+      setMode(next) { mode = next; },
+      pulse(ch) { if (!/\s/.test(ch)) kick = Math.min(1, kick + 0.28); },
+    };
+  })();
+
   // ---------- 起動 ----------
   document.addEventListener("pointerdown", () => { everTapped = true; requestWakeLock(); }, { once: true });
   renderDerived();
+  fx.configure();
   prepareUserLine();
   updateSendEnabled();
 
