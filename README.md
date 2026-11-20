@@ -5,6 +5,7 @@
 本番テイク用に、決めた台詞を「生成しているように」表示する**台本モード**も持っています。
 
 - モデル選定の経緯: [docs/01_model_selection.md](docs/01_model_selection.md)
+- **Xcode なしで使うウェブ版（台本モードのみ）:** [web/prop-chat.html](web/prop-chat.html)。ブラウザだけで動き、claude.ai のアーティファクトとして公開して iPhone で開ける。
 
 ## 機能
 

@@ -1,0 +1,685 @@
+<title>台本チャット</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one-screen chat app — header / scrolling log / input bar; settings slide over as a full sheet. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16181d;
+  --muted: #6b7180;
+  --line: #e2e5eb;
+  --accent: #2f6df6;
+  --accent-fg: #ffffff;
+  --ai-bubble: #eceef3;
+  --ok: #2fa86b;
+  --busy: #e39b2d;
+  --danger: #c8443b;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --surface: #171a20; --fg: #eef0f4; --muted: #9399a6; --line: #2a2e37;
+    --accent: #4f86ff; --accent-fg: #ffffff; --ai-bubble: #22262e; --ok: #3cc07e; --busy: #f0ad45; --danger: #ef6a60;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --surface: #171a20; --fg: #eef0f4; --muted: #9399a6; --line: #2a2e37;
+  --accent: #4f86ff; --accent-fg: #ffffff; --ai-bubble: #22262e; --ok: #3cc07e; --busy: #f0ad45; --danger: #ef6a60;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { height: 100%; }
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--bg);
+}
+
+/* Header */
+.header {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); transition: background .2s; }
+.dot.busy { background: var(--busy); }
+.ai-name { font-weight: 600; font-size: 17px; letter-spacing: .01em; }
+
+/* Log */
+.log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-block: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.row { display: flex; }
+.row.user { justify-content: flex-end; }
+.bubble {
+  max-width: min(78%, 520px);
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 18px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.user .bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 6px; }
+.ai .bubble { background: var(--ai-bubble); border-bottom-left-radius: 6px; }
+.caret::after { content: "▍"; margin-left: 2px; opacity: .55; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.typing { display: inline-flex; gap: 5px; padding-block: 6px; }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .3; animation: pulse 1.05s infinite; }
+.typing i:nth-child(2) { animation-delay: .35s; }
+.typing i:nth-child(3) { animation-delay: .7s; }
+@keyframes pulse { 0%, 66%, 100% { opacity: .3; } 33% { opacity: 1; } }
+
+/* Input bar */
+.composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding-block: 8px;
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 140px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg);
+  line-height: 1.45;
+  font-size: 16px; /* 16px 未満だと iOS が拡大表示する */
+}
+.send {
+  flex: none;
+  width: 40px; height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  display: grid; place-items: center;
+}
+.send:disabled { opacity: .35; cursor: default; }
+.send svg { width: 20px; height: 20px; }
+
+/* Hint toast */
+.hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 13px;
+  text-align: center;
+  transition: opacity .4s;
+}
+.hint.fade { opacity: 0; }
+
+/* Settings sheet */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  overflow-y: auto;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.sheet-head h2 { margin: 0; font-size: 17px; }
+.sheet-body {
+  max-width: 720px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+  padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.group { display: grid; gap: 10px; }
+.group h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.field { display: grid; gap: 6px; min-width: 0; }
+.field label, .field .label { font-size: 14px; }
+.field small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.field input[type="text"], .field textarea, .field select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 16px;
+}
+.field textarea { resize: vertical; line-height: 1.55; }
+#script { min-height: 220px; font-size: 15px; }
+.range-row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.range-row output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
+.seg button { border: 0; padding: 7px; border-radius: 7px; background: transparent; font-size: 14px; }
+.seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+.btn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  text-align: center;
+}
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 600; }
+.btn.danger { color: var(--danger); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn-row .btn { flex: 1 1 140px; }
+.close { border: 0; background: transparent; color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px 2px; }
+.meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.confirm { display: grid; gap: 8px; padding: 10px; border-radius: 10px; border: 1px solid var(--danger); }
+.confirm p { margin: 0; font-size: 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .caret::after, .typing i { animation: none; }
+  .typing i { opacity: .7; }
+}
+</style>
+
+<div class="app">
+  <header class="header" id="header" aria-label="AI の名前（3 回タップで設定）">
+    <span class="dot" id="dot"></span>
+    <span class="ai-name" id="aiName">AI</span>
+  </header>
+
+  <main class="log" id="log" aria-live="polite"></main>
+
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" placeholder="メッセージを入力" enterkeyhint="send" aria-label="メッセージ"></textarea>
+    <button class="send" id="send" type="submit" aria-label="送信" disabled>
+      <svg id="sendIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    </button>
+  </form>
+</div>
+
+<div class="hint" id="hint" hidden>上部の名前を 3 回タップすると設定が開きます</div>
+
+<section class="sheet" id="sheet" hidden aria-label="設定">
+  <div class="sheet-head">
+    <h2>設定</h2>
+    <button class="close" id="closeSheet" type="button">閉じる</button>
+  </div>
+  <div class="sheet-body">
+
+    <div class="group">
+      <h3>テイク</h3>
+      <div class="card">
+        <button class="btn primary" id="resetTake" type="button">会話を消して台本の頭に戻す</button>
+        <div class="field">
+          <label for="nextLine">次に話す台詞</label>
+          <select id="nextLine"></select>
+          <small>途中のカットから撮り直すときに選びます。</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>台本</h3>
+      <div class="card">
+        <div class="field">
+          <label for="script">AI の台詞</label>
+          <textarea id="script" spellcheck="false"></textarea>
+          <small>台詞の区切りは「---」だけの行です。「#」で始まる行はメモとして無視されます。何を入力されても、台詞を上から順番に返します。</small>
+          <span class="meta" id="scriptMeta"></span>
+        </div>
+        <div class="field">
+          <span class="label">台本を使い切ったら</span>
+          <div class="seg" role="group" aria-label="台本を使い切ったら">
+            <button type="button" id="policyFallback">予備の台詞を返す</button>
+            <button type="button" id="policyLoop">最初に戻る</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fallback">予備の台詞</label>
+          <input type="text" id="fallback">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>文字送り</h3>
+      <div class="card">
+        <div class="field">
+          <div class="range-row"><label for="thinking">考える時間</label><output id="thinkingOut"></output></div>
+          <input type="range" id="thinking" min="0" max="3000" step="50">
+        </div>
+        <div class="field">
+          <div class="range-row"><label for="interval">1 文字の間隔</label><output id="intervalOut"></output></div>
+          <input type="range" id="interval" min="10" max="200" step="5">
+        </div>
+        <div class="field">
+          <div class="range-row"><label for="comma">読点（、）のあとの間</label><output id="commaOut"></output></div>
+          <input type="range" id="comma" min="0" max="600" step="10">
+        </div>
+        <div class="field">
+          <div class="range-row"><label for="sentence">句点（。！？）・改行のあとの間</label><output id="sentenceOut"></output></div>
+          <input type="range" id="sentence" min="0" max="1500" step="10">
+        </div>
+        <span class="meta" id="durationMeta"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>見た目</h3>
+      <div class="card">
+        <div class="field">
+          <label for="name">AI の表示名</label>
+          <input type="text" id="name">
+        </div>
+        <div class="field">
+          <label for="placeholder">入力欄の案内文</label>
+          <input type="text" id="placeholder">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>その他</h3>
+      <div class="card">
+        <div class="btn-row">
+          <button class="btn" id="copyScript" type="button">台本をコピー</button>
+          <button class="btn danger" id="askRestore" type="button">設定を初期値に戻す</button>
+        </div>
+        <div class="confirm" id="confirmRestore" hidden>
+          <p>台本と設定がすべて初期値に戻ります。よろしいですか？</p>
+          <div class="btn-row">
+            <button class="btn" id="cancelRestore" type="button">やめる</button>
+            <button class="btn danger" id="doRestore" type="button">初期値に戻す</button>
+          </div>
+        </div>
+        <small class="meta" id="copyMeta">設定はこの端末のブラウザにだけ保存されます。別の端末で使うときは台本をコピーして貼り付けてください。</small>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- 設定 ----------
+  const STORAGE_KEY = "propChat.v1";
+  const SAMPLE_SCRIPT = [
+    "# サンプル台本（書き換えてください）",
+    "こんにちは。今日はどんなご用件でしょうか？",
+    "---",
+    "なるほど、少し考えさせてください。",
+    "……はい。それなら、まず深呼吸をしてみるのはいかがでしょう。",
+    "---",
+    "どういたしまして。またいつでも話しかけてくださいね。",
+  ].join("\n");
+
+  const DEFAULTS = {
+    name: "AI",
+    placeholder: "メッセージを入力",
+    script: SAMPLE_SCRIPT,
+    policy: "fallback",
+    fallback: "申し訳ありません。もう一度お願いできますか？",
+    thinking: 900,
+    interval: 45,
+    comma: 120,
+    sentence: 300,
+    nextIndex: 0,
+    hintShown: false,
+  };
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return Object.assign({}, DEFAULTS, JSON.parse(raw));
+    } catch (_) { /* 保存できない環境でも動かす */ }
+    return Object.assign({}, DEFAULTS);
+  }
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
+  }
+
+  const state = load();
+
+  // ---------- 台本 ----------
+  // 「---」だけの行で区切る。「#」で始まる行は無視。空の台詞は数えない。
+  function parseScript(text) {
+    const lines = [];
+    let current = [];
+    const flush = () => {
+      const joined = current.join("\n").trim();
+      if (joined) lines.push(joined);
+      current = [];
+    };
+    for (const raw of text.split(/\r?\n/)) {
+      const trimmed = raw.trim();
+      if (trimmed === "---") flush();
+      else if (trimmed.startsWith("#")) continue;
+      else current.push(raw);
+    }
+    flush();
+    return lines;
+  }
+
+  function nextLine() {
+    const lines = parseScript(state.script);
+    if (state.nextIndex >= lines.length) {
+      if (state.policy === "loop" && lines.length > 0) state.nextIndex = 0;
+      else return state.fallback;
+    }
+    const line = lines[state.nextIndex];
+    state.nextIndex += 1;
+    save();
+    return line;
+  }
+
+  // ---------- 文字送りのリズム（乱数なし。毎テイク同じタイミング） ----------
+  const COMMA = new Set(["、", "，", ","]);
+  const SENTENCE = new Set(["。", "．", "！", "？", "!", "?", "\n", "…"]);
+  function schedule(text) {
+    const chars = Array.from(text);
+    const steps = [];
+    let pending = 0;
+    chars.forEach((ch, i) => {
+      steps.push({ delay: (i === 0 ? state.thinking : state.interval) + pending, ch });
+      pending = COMMA.has(ch) ? state.comma : SENTENCE.has(ch) ? state.sentence : 0;
+    });
+    return steps;
+  }
+
+  // ---------- 画面 ----------
+  const $ = (id) => document.getElementById(id);
+  const log = $("log"), input = $("input"), sendBtn = $("send"), dot = $("dot");
+  let responding = false;
+  let runToken = 0;
+
+  function scrollToEnd() { log.scrollTop = log.scrollHeight; }
+
+  function addBubble(role, text) {
+    const row = document.createElement("div");
+    row.className = "row " + role;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    log.appendChild(row);
+    scrollToEnd();
+    return bubble;
+  }
+
+  const SEND_ICON = '<path d="M12 19V5M5 12l7-7 7 7"/>';
+  const STOP_ICON = '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>';
+  function setResponding(value) {
+    responding = value;
+    dot.classList.toggle("busy", value);
+    $("sendIcon").innerHTML = value ? STOP_ICON : SEND_ICON;
+    sendBtn.setAttribute("aria-label", value ? "停止" : "送信");
+    updateSendEnabled();
+  }
+  function updateSendEnabled() {
+    sendBtn.disabled = !responding && input.value.trim() === "";
+  }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function reply() {
+    const token = ++runToken;
+    const bubble = addBubble("ai", "");
+    bubble.innerHTML = '<span class="typing" aria-label="返答を作成中"><i></i><i></i><i></i></span>';
+    setResponding(true);
+    const steps = schedule(nextLine());
+    let text = "";
+    for (const step of steps) {
+      await wait(step.delay);
+      if (token !== runToken) break;
+      text += step.ch;
+      bubble.textContent = text;
+      bubble.classList.add("caret");
+      scrollToEnd();
+    }
+    if (text === "") bubble.closest(".row").remove();
+    bubble.classList.remove("caret");
+    if (token === runToken) setResponding(false);
+  }
+
+  function stop() {
+    runToken++;
+    log.querySelectorAll(".caret").forEach((el) => el.classList.remove("caret"));
+    log.querySelectorAll(".typing").forEach((el) => el.closest(".row").remove());
+    setResponding(false);
+  }
+
+  function send() {
+    if (responding) { stop(); return; }
+    const text = input.value.trim();
+    if (!text) return;
+    addBubble("user", text);
+    input.value = "";
+    autosize();
+    updateSendEnabled();
+    requestWakeLock();
+    reply();
+  }
+
+  $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+  input.addEventListener("input", () => { autosize(); updateSendEnabled(); });
+  input.addEventListener("keydown", (e) => {
+    // 日本語の変換確定の Enter では送信しない
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      send();
+    }
+  });
+  function autosize() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight + 2, 140) + "px";
+  }
+
+  // 撮影中に画面が消えないようにする（許可されない環境では何もしない）
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try {
+      if (!wakeLock && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      }
+    } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.everTapped) requestWakeLock();
+  });
+
+  // ---------- 隠し設定（名前を 3 回タップ） ----------
+  let taps = [];
+  $("header").addEventListener("click", () => {
+    const now = Date.now();
+    taps = taps.filter((t) => now - t < 700);
+    taps.push(now);
+    if (taps.length >= 3) { taps = []; openSheet(); }
+  });
+
+  const sheet = $("sheet");
+  function openSheet() {
+    input.blur();
+    renderSettings();
+    sheet.hidden = false;
+    sheet.scrollTop = 0;
+  }
+  function closeSheet() { sheet.hidden = true; }
+  $("closeSheet").addEventListener("click", closeSheet);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
+
+  // ---------- 設定画面 ----------
+  const ranges = ["thinking", "interval", "comma", "sentence"];
+
+  function renderSettings() {
+    $("name").value = state.name;
+    $("placeholder").value = state.placeholder;
+    $("script").value = state.script;
+    $("fallback").value = state.fallback;
+    ranges.forEach((k) => { $(k).value = state[k]; });
+    renderPolicy();
+    renderDerived();
+    $("confirmRestore").hidden = true;
+  }
+
+  function renderPolicy() {
+    $("policyFallback").setAttribute("aria-pressed", String(state.policy === "fallback"));
+    $("policyLoop").setAttribute("aria-pressed", String(state.policy === "loop"));
+  }
+
+  function renderDerived() {
+    const lines = parseScript(state.script);
+    if (state.nextIndex > lines.length) state.nextIndex = lines.length;
+    $("scriptMeta").textContent = lines.length + " 台詞";
+    const select = $("nextLine");
+    select.innerHTML = "";
+    lines.forEach((line, i) => {
+      const opt = document.createElement("option");
+      const head = line.replace(/\s+/g, " ");
+      opt.value = String(i);
+      opt.textContent = (i + 1) + ". " + (head.length > 24 ? head.slice(0, 24) + "…" : head);
+      select.appendChild(opt);
+    });
+    const end = document.createElement("option");
+    end.value = String(lines.length);
+    end.textContent = "（台本の終わり）";
+    select.appendChild(end);
+    select.value = String(state.nextIndex);
+
+    ranges.forEach((k) => { $(k + "Out").textContent = state[k] + " ms"; });
+    const total = lines.reduce((sum, line) => sum + schedule(line).reduce((s, st) => s + st.delay, 0), 0);
+    $("durationMeta").textContent = lines.length
+      ? "台本全体の表示時間の目安: " + (total / 1000).toFixed(1) + " 秒（入力の時間を除く）"
+      : "";
+
+    $("aiName").textContent = state.name || "AI";
+    input.placeholder = state.placeholder || "";
+  }
+
+  $("name").addEventListener("input", (e) => { state.name = e.target.value; save(); renderDerived(); });
+  $("placeholder").addEventListener("input", (e) => { state.placeholder = e.target.value; save(); renderDerived(); });
+  $("script").addEventListener("input", (e) => { state.script = e.target.value; save(); renderDerived(); });
+  $("fallback").addEventListener("input", (e) => { state.fallback = e.target.value; save(); });
+  ranges.forEach((k) => {
+    $(k).addEventListener("input", (e) => { state[k] = Number(e.target.value); save(); renderDerived(); });
+  });
+  $("policyFallback").addEventListener("click", () => { state.policy = "fallback"; save(); renderPolicy(); });
+  $("policyLoop").addEventListener("click", () => { state.policy = "loop"; save(); renderPolicy(); });
+  $("nextLine").addEventListener("change", (e) => { state.nextIndex = Number(e.target.value); save(); });
+
+  $("resetTake").addEventListener("click", () => {
+    stop();
+    log.innerHTML = "";
+    state.nextIndex = 0;
+    save();
+    closeSheet();
+  });
+
+  $("copyScript").addEventListener("click", async () => {
+    const meta = $("copyMeta");
+    try {
+      await navigator.clipboard.writeText(state.script);
+      meta.textContent = "台本をコピーしました。";
+    } catch (_) {
+      const area = $("script");
+      area.focus();
+      area.select();
+      meta.textContent = "コピーできなかったため、台本欄を選択しました。共有メニューからコピーしてください。";
+    }
+  });
+
+  $("askRestore").addEventListener("click", () => { $("confirmRestore").hidden = false; });
+  $("cancelRestore").addEventListener("click", () => { $("confirmRestore").hidden = true; });
+  $("doRestore").addEventListener("click", () => {
+    Object.assign(state, DEFAULTS, { hintShown: true });
+    save();
+    renderSettings();
+  });
+
+  // ---------- 起動 ----------
+  document.addEventListener("pointerdown", () => { state.everTapped = true; requestWakeLock(); }, { once: true });
+  renderDerived();
+  updateSendEnabled();
+
+  if (!state.hintShown) {
+    const hint = $("hint");
+    hint.hidden = false;
+    setTimeout(() => hint.classList.add("fade"), 4500);
+    setTimeout(() => { hint.hidden = true; }, 5000);
+    state.hintShown = true;
+    save();
+  }
+})();
+</script>
