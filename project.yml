@@ -27,6 +27,8 @@ targets:
   AIInterface:
     type: application
     platform: iOS
+    # xcodebuild -scheme で指定できるよう、共有スキームを生成する
+    scheme: {}
     sources:
       - path: App/Sources
       # 同梱モデル。フォルダごと「Models」としてバンドルにコピーする。

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # UI と MLX に依存しないロジックのテスト（Linux で安く速く回す）
+  core-tests:
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test PropCore
+        working-directory: Packages/PropCore
+        run: swift test
+
+  # iOS アプリ本体のビルド確認（署名なし。実機への配布はしない）
+  ios-build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Xcode 26 では Metal のコンパイラが別コンポーネント。MLX のシェーダのビルドに必要。
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+
+      - name: Build for iOS device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project AIInterface.xcodeproj \
+            -scheme AIInterface \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: build.log
+          if-no-files-found: ignore
